@@ -8,11 +8,25 @@
     import { HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest";
 
     let socket;
+    let showVideo = true;
+    let showWireframe = true;
+    let lastFrameTime = performance.now();
+    let fps = 0;
+
     try {
       socket = new WebSocket("ws://localhost:8080");
     } catch (e) {
       console.warn("WebSocket connection failed");
     }
+
+    const connections = [
+      [0, 1], [1, 2], [2, 3], [3, 4],
+      [0, 5], [5, 6], [6, 7], [7, 8],
+      [5, 9], [9,10], [10,11], [11,12],
+      [9,13], [13,14], [14,15], [15,16],
+      [13,17], [17,18], [18,19], [19,20],
+      [0,17]
+    ];
 
     async function init() {
       const vision = await FilesetResolver.forVisionTasks(
@@ -29,13 +43,32 @@
       const video = document.getElementById("video");
       const canvas = document.getElementById("canvas");
       const ctx = canvas.getContext("2d");
+      const toggleVideoBtn = document.getElementById("toggleVideo");
+      const toggleWireframeBtn = document.getElementById("toggleWireframe");
+      const fpsDisplay = document.getElementById("fpsDisplay");
+
+      toggleVideoBtn.onclick = () => {
+        showVideo = !showVideo;
+        video.style.display = showVideo ? "block" : "none";
+        toggleVideoBtn.innerText = showVideo ? "Hide Video" : "Show Video";
+      };
+
+      toggleWireframeBtn.onclick = () => {
+        showWireframe = !showWireframe;
+        toggleWireframeBtn.innerText = showWireframe ? "Hide Wireframe" : "Show Wireframe";
+      };
 
       navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
         video.srcObject = stream;
         video.play();
 
         function processFrame() {
-          handLandmarker.detectForVideo(video, performance.now()).then(res => {
+          const now = performance.now();
+          fps = Math.round(1000 / (now - lastFrameTime));
+          lastFrameTime = now;
+          fpsDisplay.innerText = `FPS: ${fps}`;
+
+          handLandmarker.detectForVideo(video, now).then(res => {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             if (res.landmarks.length > 0) {
               const payload = res.landmarks.map(hand => hand.flatMap(pt => [pt.x, pt.y, pt.z]));
@@ -44,11 +77,25 @@
               }
 
               res.landmarks.forEach(hand => {
-                hand.forEach(pt => {
-                  ctx.beginPath();
-                  ctx.arc(pt.x * canvas.width, pt.y * canvas.height, 5, 0, 2 * Math.PI);
-                  ctx.fill();
-                });
+                if (showWireframe) {
+                  ctx.strokeStyle = "#00ff00";
+                  ctx.lineWidth = 2;
+                  connections.forEach(([start, end]) => {
+                    const a = hand[start];
+                    const b = hand[end];
+                    ctx.beginPath();
+                    ctx.moveTo(a.x * canvas.width, a.y * canvas.height);
+                    ctx.lineTo(b.x * canvas.width, b.y * canvas.height);
+                    ctx.stroke();
+                  });
+
+                  ctx.fillStyle = "#ff0000";
+                  hand.forEach(pt => {
+                    ctx.beginPath();
+                    ctx.arc(pt.x * canvas.width, pt.y * canvas.height, 5, 0, 2 * Math.PI);
+                    ctx.fill();
+                  });
+                }
               });
             }
             requestAnimationFrame(processFrame);
@@ -62,9 +109,23 @@
   </script>
   <style>
     canvas, video { position: absolute; top: 0; left: 0; }
+    #toggleVideo, #toggleWireframe, #fpsDisplay {
+      position: absolute;
+      z-index: 10;
+      background: white;
+      border: none;
+      padding: 6px 10px;
+      margin: 4px;
+    }
+    #toggleVideo { top: 10px; left: 10px; }
+    #toggleWireframe { top: 50px; left: 10px; }
+    #fpsDisplay { top: 90px; left: 10px; font-family: monospace; }
   </style>
 </head>
 <body>
+  <button id="toggleVideo">Hide Video</button>
+  <button id="toggleWireframe">Hide Wireframe</button>
+  <div id="fpsDisplay">FPS: 0</div>
   <video id="video" width="640" height="480" autoplay muted playsinline></video>
   <canvas id="canvas" width="640" height="480"></canvas>
 </body>
