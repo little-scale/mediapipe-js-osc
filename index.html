@@ -1,0 +1,64 @@
+// File: index.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>MediaPipe Hands to OSC via WebSocket</title>
+  <script type="module">
+    import { HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest";
+
+    let socket = new WebSocket("ws://localhost:8080");
+
+    async function init() {
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+      );
+      const handLandmarker = await HandLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/light/hand_landmarker.task"
+        },
+        runningMode: "VIDEO",
+        numHands: 2
+      });
+
+      const video = document.getElementById("video");
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+
+      navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+        video.srcObject = stream;
+        video.play();
+
+        function processFrame() {
+          handLandmarker.detectForVideo(video, performance.now()).then(res => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (res.landmarks.length > 0) {
+              const payload = res.landmarks.map(hand => hand.flatMap(pt => [pt.x, pt.y, pt.z]));
+              socket.send(JSON.stringify(payload));
+
+              res.landmarks.forEach(hand => {
+                hand.forEach(pt => {
+                  ctx.beginPath();
+                  ctx.arc(pt.x * canvas.width, pt.y * canvas.height, 5, 0, 2 * Math.PI);
+                  ctx.fill();
+                });
+              });
+            }
+            requestAnimationFrame(processFrame);
+          });
+        }
+        processFrame();
+      });
+    }
+
+    window.onload = init;
+  </script>
+  <style>
+    canvas, video { position: absolute; top: 0; left: 0; }
+  </style>
+</head>
+<body>
+  <video id="video" width="640" height="480" autoplay muted playsinline></video>
+  <canvas id="canvas" width="640" height="480"></canvas>
+</body>
+</html>
