@@ -62,46 +62,56 @@
         video.srcObject = stream;
         video.play();
 
-        function processFrame() {
-          const now = performance.now();
-          fps = Math.round(1000 / (now - lastFrameTime));
-          lastFrameTime = now;
-          fpsDisplay.innerText = `FPS: ${fps}`;
+        video.onloadedmetadata = () => {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
 
-          handLandmarker.detectForVideo(video, now).then(res => {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            if (res.landmarks.length > 0) {
-              const payload = res.landmarks.map(hand => hand.flatMap(pt => [pt.x, pt.y, pt.z]));
-              if (socket && socket.readyState === WebSocket.OPEN) {
-                socket.send(JSON.stringify(payload));
-              }
-
-              res.landmarks.forEach(hand => {
-                if (showWireframe) {
-                  ctx.strokeStyle = "#00ff00";
-                  ctx.lineWidth = 2;
-                  connections.forEach(([start, end]) => {
-                    const a = hand[start];
-                    const b = hand[end];
-                    ctx.beginPath();
-                    ctx.moveTo(a.x * canvas.width, a.y * canvas.height);
-                    ctx.lineTo(b.x * canvas.width, b.y * canvas.height);
-                    ctx.stroke();
-                  });
-
-                  ctx.fillStyle = "#ff0000";
-                  hand.forEach(pt => {
-                    ctx.beginPath();
-                    ctx.arc(pt.x * canvas.width, pt.y * canvas.height, 5, 0, 2 * Math.PI);
-                    ctx.fill();
-                  });
-                }
-              });
+          function processFrame() {
+            if (video.videoWidth === 0 || video.videoHeight === 0) {
+              requestAnimationFrame(processFrame);
+              return;
             }
-            requestAnimationFrame(processFrame);
-          });
-        }
-        processFrame();
+
+            const now = performance.now();
+            fps = Math.round(1000 / (now - lastFrameTime));
+            lastFrameTime = now;
+            fpsDisplay.innerText = `FPS: ${fps}`;
+
+            handLandmarker.detectForVideo(video, now).then(res => {
+              ctx.clearRect(0, 0, canvas.width, canvas.height);
+              if (res.landmarks.length > 0) {
+                const payload = res.landmarks.map(hand => hand.flatMap(pt => [pt.x, pt.y, pt.z]));
+                if (socket && socket.readyState === WebSocket.OPEN) {
+                  socket.send(JSON.stringify(payload));
+                }
+
+                res.landmarks.forEach(hand => {
+                  if (showWireframe) {
+                    ctx.strokeStyle = "#00ff00";
+                    ctx.lineWidth = 2;
+                    connections.forEach(([start, end]) => {
+                      const a = hand[start];
+                      const b = hand[end];
+                      ctx.beginPath();
+                      ctx.moveTo(a.x * canvas.width, a.y * canvas.height);
+                      ctx.lineTo(b.x * canvas.width, b.y * canvas.height);
+                      ctx.stroke();
+                    });
+
+                    ctx.fillStyle = "#ff0000";
+                    hand.forEach(pt => {
+                      ctx.beginPath();
+                      ctx.arc(pt.x * canvas.width, pt.y * canvas.height, 5, 0, 2 * Math.PI);
+                      ctx.fill();
+                    });
+                  }
+                });
+              }
+              requestAnimationFrame(processFrame);
+            });
+          }
+          processFrame();
+        };
       });
     }
 
@@ -130,3 +140,4 @@
   <canvas id="canvas" width="640" height="480"></canvas>
 </body>
 </html>
+
