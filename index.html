@@ -13,6 +13,7 @@
     let lastFrameTime = performance.now();
     let fps = 0;
     let streamStartTime = null;
+    let skippedFrames = 0;
 
     try {
       socket = new WebSocket("ws://localhost:8080");
@@ -71,7 +72,9 @@
           streamStartTime = performance.now();
 
           async function processFrame() {
-            if (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
+            // skip early frames
+            if (video.readyState < 3 || video.videoWidth === 0 || video.videoHeight === 0 || video.ended || video.paused || skippedFrames < 5) {
+              skippedFrames++;
               requestAnimationFrame(processFrame);
               return;
             }
@@ -83,11 +86,6 @@
             fps = Math.round(1000 / (now - lastFrameTime));
             lastFrameTime = now;
             fpsDisplay.innerText = `FPS: ${fps}`;
-
-            if (now - streamStartTime < 500) {
-              requestAnimationFrame(processFrame);
-              return;
-            }
 
             try {
               console.log("Calling detectForVideo...");
