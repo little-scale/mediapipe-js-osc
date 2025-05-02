@@ -12,6 +12,7 @@
     let showWireframe = true;
     let lastFrameTime = performance.now();
     let fps = 0;
+    let streamStartTime = null;
 
     try {
       socket = new WebSocket("ws://localhost:8080");
@@ -29,6 +30,7 @@
     ];
 
     async function init() {
+      console.log("Loading model...");
       const vision = await FilesetResolver.forVisionTasks(
         "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
       );
@@ -39,6 +41,7 @@
         runningMode: "VIDEO",
         numHands: 2
       });
+      console.log("HandLandmarker model initialized.");
 
       const video = document.getElementById("video");
       const canvas = document.getElementById("canvas");
@@ -65,20 +68,32 @@
         video.onloadedmetadata = () => {
           canvas.width = video.videoWidth;
           canvas.height = video.videoHeight;
+          streamStartTime = performance.now();
 
-          function processFrame() {
-            if (video.videoWidth === 0 || video.videoHeight === 0) {
+          async function processFrame() {
+            if (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
               requestAnimationFrame(processFrame);
               return;
             }
+
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
 
             const now = performance.now();
             fps = Math.round(1000 / (now - lastFrameTime));
             lastFrameTime = now;
             fpsDisplay.innerText = `FPS: ${fps}`;
 
-            handLandmarker.detectForVideo(video, now).then(res => {
+            if (now - streamStartTime < 500) {
+              requestAnimationFrame(processFrame);
+              return;
+            }
+
+            try {
+              console.log("Calling detectForVideo...");
+              const res = await handLandmarker.detectForVideo(video, now);
               ctx.clearRect(0, 0, canvas.width, canvas.height);
+
               if (res.landmarks.length > 0) {
                 const payload = res.landmarks.map(hand => hand.flatMap(pt => [pt.x, pt.y, pt.z]));
                 if (socket && socket.readyState === WebSocket.OPEN) {
@@ -107,9 +122,13 @@
                   }
                 });
               }
-              requestAnimationFrame(processFrame);
-            });
+            } catch (err) {
+              console.warn("handLandmarker error:", err);
+            }
+
+            requestAnimationFrame(processFrame);
           }
+
           processFrame();
         };
       });
@@ -140,4 +159,3 @@
   <canvas id="canvas" width="640" height="480"></canvas>
 </body>
 </html>
-
