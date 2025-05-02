@@ -7,7 +7,12 @@
   <script type="module">
     import { HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest";
 
-    let socket = new WebSocket("ws://localhost:8080");
+    let socket;
+    try {
+      socket = new WebSocket("ws://localhost:8080");
+    } catch (e) {
+      console.warn("WebSocket connection failed");
+    }
 
     async function init() {
       const vision = await FilesetResolver.forVisionTasks(
@@ -15,7 +20,7 @@
       );
       const handLandmarker = await HandLandmarker.createFromOptions(vision, {
         baseOptions: {
-          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/light/hand_landmarker.task"
+          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task"
         },
         runningMode: "VIDEO",
         numHands: 2
@@ -34,7 +39,9 @@
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             if (res.landmarks.length > 0) {
               const payload = res.landmarks.map(hand => hand.flatMap(pt => [pt.x, pt.y, pt.z]));
-              socket.send(JSON.stringify(payload));
+              if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify(payload));
+              }
 
               res.landmarks.forEach(hand => {
                 hand.forEach(pt => {
