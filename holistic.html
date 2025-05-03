@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>MediaPipe Holistic (Legacy Fixed) to WebSocket OSC</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+</head>
+<body>
+  <!-- Hide native video element -->
+  <video class="input_video" autoplay muted playsinline style="display: none;"></video>
+  <canvas class="output_canvas" width="640px" height="480px"></canvas>
+  <div style="position: absolute; top: 10px; left: 10px; z-index: 10;">
+    <button id="toggleVideo">Hide Video</button>
+    <button id="toggleWireframe">Hide Wireframe</button>
+    <div id="fpsDisplay" style="background: white; font-family: monospace; padding: 4px;">FPS: 0</div>
+  </div>
+
+  <script>
+    const videoElement = document.querySelector('.input_video');
+    const canvasElement = document.querySelector('.output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const fpsDisplay = document.getElementById("fpsDisplay");
+    const toggleVideoBtn = document.getElementById("toggleVideo");
+    const toggleWireframeBtn = document.getElementById("toggleWireframe");
+
+    let showVideo = true;
+    let showWireframe = true;
+
+    toggleVideoBtn.onclick = () => {
+      showVideo = !showVideo;
+      toggleVideoBtn.innerText = showVideo ? 'Hide Video' : 'Show Video';
+    };
+
+    toggleWireframeBtn.onclick = () => {
+      showWireframe = !showWireframe;
+      toggleWireframeBtn.innerText = showWireframe ? 'Hide Wireframe' : 'Show Wireframe';
+    };
+
+    let socket;
+    try {
+      socket = new WebSocket("ws://localhost:8080");
+    } catch (e) {
+      console.warn("WebSocket failed");
+    }
+
+    const holistic = new Holistic({
+      locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
+    });
+
+    holistic.setOptions({
+      modelComplexity: 1,
+      smoothLandmarks: true,
+      enableSegmentation: false,
+      refineFaceLandmarks: true,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+
+    let lastTime = performance.now();
+    let holisticReady = false;
+
+    holistic.onResults(results => {
+      if (!holisticReady) {
+        console.log("✅ Holistic model is running.");
+        holisticReady = true;
+      }
+
+      const now = performance.now();
+      const fps = Math.round(1000 / (now - lastTime));
+      lastTime = now;
+      fpsDisplay.innerText = `FPS: ${fps}`;
+
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      if (showVideo) {
+        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+      }
+
+      if (showWireframe) {
+        if (results.poseLandmarks) {
+          drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#00FF00', lineWidth: 2 });
+          drawLandmarks(canvasCtx, results.poseLandmarks, { color: '#FF0000', radius: 3 });
+        }
+        if (results.faceLandmarks) {
+          drawLandmarks(canvasCtx, results.faceLandmarks, { color: '#00FFFF', radius: 1 });
+        }
+        if (results.leftHandLandmarks) {
+          drawConnectors(canvasCtx, results.leftHandLandmarks, HAND_CONNECTIONS, { color: '#CC0000', lineWidth: 2 });
+          drawLandmarks(canvasCtx, results.leftHandLandmarks, { color: '#FF0000', radius: 3 });
+        }
+        if (results.rightHandLandmarks) {
+          drawConnectors(canvasCtx, results.rightHandLandmarks, HAND_CONNECTIONS, { color: '#0000CC', lineWidth: 2 });
+          drawLandmarks(canvasCtx, results.rightHandLandmarks, { color: '#0000FF', radius: 3 });
+        }
+      }
+
+      canvasCtx.restore();
+
+      function sendOSC(path, landmarks) {
+        if (!socket || socket.readyState !== WebSocket.OPEN || !landmarks) return;
+        const flattened = landmarks.flatMap(pt => [pt.x, pt.y, pt.z]);
+        socket.send(JSON.stringify([path, ...flattened]));
+      }
+
+      sendOSC("/pose", results.poseLandmarks);
+      sendOSC("/face", results.faceLandmarks);
+      sendOSC("/left", results.leftHandLandmarks);
+      sendOSC("/right", results.rightHandLandmarks);
+    });
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      alert("getUserMedia not supported in this browser.");
+    } else {
+      navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+        videoElement.srcObject = stream;
+        videoElement.play();
+
+        videoElement.onloadeddata = () => {
+          console.log("🎥 Camera stream started");
+
+          async function renderLoop() {
+            try {
+              await holistic.send({ image: videoElement });
+            } catch (err) {
+              console.error("❌ holistic.send() failed:", err);
+            }
+            requestAnimationFrame(renderLoop);
+          }
+
+          renderLoop();
+        };
+      }).catch(err => {
+        alert("Camera access denied or failed: " + err);
+      });
+    }
+  </script>
+</body>
+</html>

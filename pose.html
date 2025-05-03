@@ -1,0 +1,162 @@
+// File: index.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>MediaPipe Pose to OSC via WebSocket</title>
+  <script type="module">
+    import { PoseLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest";
+
+    let socket;
+    let showVideo = true;
+    let showWireframe = true;
+    let lastFrameTime = performance.now();
+    let fps = 0;
+    let streamStartTime = null;
+    let skippedFrames = 0;
+
+    try {
+      socket = new WebSocket("ws://localhost:8080");
+    } catch (e) {
+      console.warn("WebSocket connection failed");
+    }
+
+    const connections = [
+      [0, 1], [1, 2], [2, 3], [3, 7], // right eye
+      [0, 4], [4, 5], [5, 6], [6, 8], // left eye
+      [9, 10], // shoulders
+      [11, 12], // hips
+      [11, 13], [13, 15], // left arm
+      [12, 14], [14, 16], // right arm
+      [11, 23], [12, 24], // hip to knee
+      [23, 25], [25, 27], // left leg
+      [24, 26], [26, 28], // right leg
+      [27, 29], [28, 30], // ankles to feet
+      [29, 31], [30, 32]  // feet tips
+    ];
+
+    async function init() {
+      console.log("Loading pose model...");
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+      );
+      const poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task"
+        },
+        runningMode: "VIDEO",
+        numPoses: 1
+      });
+      console.log("PoseLandmarker model initialized.");
+
+      const video = document.getElementById("video");
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+      const toggleVideoBtn = document.getElementById("toggleVideo");
+      const toggleWireframeBtn = document.getElementById("toggleWireframe");
+      const fpsDisplay = document.getElementById("fpsDisplay");
+
+      toggleVideoBtn.onclick = () => {
+        showVideo = !showVideo;
+        video.style.display = showVideo ? "block" : "none";
+        toggleVideoBtn.innerText = showVideo ? "Hide Video" : "Show Video";
+      };
+
+      toggleWireframeBtn.onclick = () => {
+        showWireframe = !showWireframe;
+        toggleWireframeBtn.innerText = showWireframe ? "Hide Wireframe" : "Show Wireframe";
+      };
+
+      navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+        video.srcObject = stream;
+        video.play();
+
+        video.onloadedmetadata = () => {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          streamStartTime = performance.now();
+
+          async function processFrame() {
+            if (video.readyState < 3 || video.videoWidth === 0 || video.videoHeight === 0 || video.ended || video.paused || skippedFrames < 5) {
+              skippedFrames++;
+              requestAnimationFrame(processFrame);
+              return;
+            }
+
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+
+            const now = performance.now();
+            fps = Math.round(1000 / (now - lastFrameTime));
+            lastFrameTime = now;
+            fpsDisplay.innerText = `FPS: ${fps}`;
+
+            try {
+              const res = await poseLandmarker.detectForVideo(video, now);
+              ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+              if (res.landmarks.length > 0) {
+                const points = res.landmarks[0];
+                const payload = points.flatMap(pt => [pt.x, pt.y, pt.z, pt.visibility ?? 1.0]);
+
+                if (socket && socket.readyState === WebSocket.OPEN) {
+                  socket.send(JSON.stringify(payload));
+                }
+
+                if (showWireframe) {
+                  ctx.strokeStyle = "#00ff00";
+                  ctx.lineWidth = 2;
+                  connections.forEach(([start, end]) => {
+                    const a = points[start];
+                    const b = points[end];
+                    ctx.beginPath();
+                    ctx.moveTo(a.x * canvas.width, a.y * canvas.height);
+                    ctx.lineTo(b.x * canvas.width, b.y * canvas.height);
+                    ctx.stroke();
+                  });
+
+                  ctx.fillStyle = "#ff0000";
+                  points.forEach(pt => {
+                    ctx.beginPath();
+                    ctx.arc(pt.x * canvas.width, pt.y * canvas.height, 4, 0, 2 * Math.PI);
+                    ctx.fill();
+                  });
+                }
+              }
+            } catch (err) {
+              console.warn("poseLandmarker error:", err);
+            }
+
+            requestAnimationFrame(processFrame);
+          }
+
+          processFrame();
+        };
+      });
+    }
+
+    window.onload = init;
+  </script>
+  <style>
+    canvas, video { position: absolute; top: 0; left: 0; }
+    #toggleVideo, #toggleWireframe, #fpsDisplay {
+      position: absolute;
+      z-index: 10;
+      background: white;
+      border: none;
+      padding: 6px 10px;
+      margin: 4px;
+    }
+    #toggleVideo { top: 10px; left: 10px; }
+    #toggleWireframe { top: 50px; left: 10px; }
+    #fpsDisplay { top: 90px; left: 10px; font-family: monospace; }
+  </style>
+</head>
+<body>
+  <button id="toggleVideo">Hide Video</button>
+  <button id="toggleWireframe">Hide Wireframe</button>
+  <div id="fpsDisplay">FPS: 0</div>
+  <video id="video" width="640" height="480" autoplay muted playsinline></video>
+  <canvas id="canvas" width="640" height="480"></canvas>
+</body>
+</html>

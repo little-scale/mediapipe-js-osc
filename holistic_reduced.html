@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Holistic Reduced Data with Toggles</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+</head>
+<body>
+  <canvas class="output_canvas" width="640px" height="480px"></canvas>
+  <div style="position: absolute; top: 10px; left: 10px; background: white; font-family: monospace; padding: 4px;">
+    <button id="toggleWireframe">Hide Wireframe</button>
+    <div>FPS: <span id="fps">0</span></div>
+  </div>
+  <script>
+    const canvasElement = document.querySelector('.output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const fpsDisplay = document.getElementById("fps");
+    const toggleWireframeBtn = document.getElementById("toggleWireframe");
+
+    let showWireframe = true;
+    toggleWireframeBtn.onclick = () => {
+      showWireframe = !showWireframe;
+      toggleWireframeBtn.innerText = showWireframe ? 'Hide Wireframe' : 'Show Wireframe';
+    };
+
+    let socket = new WebSocket("ws://localhost:8080");
+
+    const holistic = new Holistic({
+      locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
+    });
+
+    holistic.setOptions({
+      modelComplexity: 0,
+      smoothLandmarks: true,
+      enableSegmentation: false,
+      refineFaceLandmarks: false,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+
+    const REDUCED_FACE_INDEXES = [1, 33, 61, 199, 263, 291, 17, 0];
+    const REDUCED_POSE_INDEXES = [0, 11, 12, 23, 24];
+    const REDUCED_HAND_INDEXES = [0, 4, 8, 12, 16, 20];
+
+    function extractSubset(landmarks, indexes) {
+      return indexes.map(i => landmarks?.[i]).filter(Boolean);
+    }
+
+    holistic.onResults(results => {
+      const now = performance.now();
+      const fps = Math.round(1000 / (now - (window.lastFrameTime || now)));
+      window.lastFrameTime = now;
+      fpsDisplay.innerText = fps;
+
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+      function send(path, landmarks) {
+        if (!landmarks || socket.readyState !== WebSocket.OPEN) return;
+        const data = landmarks.flatMap(pt => [pt.x, pt.y, pt.z]);
+        socket.send(JSON.stringify([path, ...data]));
+      }
+
+      const pose = extractSubset(results.poseLandmarks, REDUCED_POSE_INDEXES);
+      const face = extractSubset(results.faceLandmarks, REDUCED_FACE_INDEXES);
+      const left = extractSubset(results.leftHandLandmarks, REDUCED_HAND_INDEXES);
+      const right = extractSubset(results.rightHandLandmarks, REDUCED_HAND_INDEXES);
+
+      send("/pose", pose);
+      send("/face", face);
+      send("/left", left);
+      send("/right", right);
+
+      if (showWireframe) {
+        if (pose) drawLandmarks(canvasCtx, pose, { color: '#FF0000', radius: 4 });
+        if (face) drawLandmarks(canvasCtx, face, { color: '#00FFFF', radius: 2 });
+        if (left) drawLandmarks(canvasCtx, left, { color: '#CC0000', radius: 3 });
+        if (right) drawLandmarks(canvasCtx, right, { color: '#0000CC', radius: 3 });
+      }
+
+      canvasCtx.restore();
+    });
+
+    navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+      const video = document.createElement("video");
+      video.srcObject = stream;
+      video.play();
+      video.onloadeddata = () => {
+        const loop = async () => {
+          await holistic.send({ image: video });
+          requestAnimationFrame(loop);
+        };
+        loop();
+      };
+    });
+  </script>
+</body>
+</html>
