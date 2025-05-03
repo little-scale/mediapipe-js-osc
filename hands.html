@@ -72,7 +72,6 @@
           streamStartTime = performance.now();
 
           async function processFrame() {
-            // skip early frames
             if (video.readyState < 3 || video.videoWidth === 0 || video.videoHeight === 0 || video.ended || video.paused || skippedFrames < 5) {
               skippedFrames++;
               requestAnimationFrame(processFrame);
@@ -88,14 +87,20 @@
             fpsDisplay.innerText = `FPS: ${fps}`;
 
             try {
-              console.log("Calling detectForVideo...");
+              // console.log("Calling detectForVideo...");
               const res = await handLandmarker.detectForVideo(video, now);
               ctx.clearRect(0, 0, canvas.width, canvas.height);
 
               if (res.landmarks.length > 0) {
-                const payload = res.landmarks.map(hand => hand.flatMap(pt => [pt.x, pt.y, pt.z]));
+                const combinedPayload = [];
+                res.landmarks.forEach((hand, i) => {
+                  const label = res.handedness[i]?.[0]?.categoryName || "unknown";
+                  combinedPayload.push(label);
+                  combinedPayload.push(...hand.flatMap(pt => [pt.x, pt.y, pt.z]));
+                });
+
                 if (socket && socket.readyState === WebSocket.OPEN) {
-                  socket.send(JSON.stringify(payload));
+                  socket.send(JSON.stringify(combinedPayload));
                 }
 
                 res.landmarks.forEach(hand => {
@@ -121,7 +126,7 @@
                 });
               }
             } catch (err) {
-              console.warn("handLandmarker error:", err);
+              // console.warn("handLandmarker error:", err);
             }
 
             requestAnimationFrame(processFrame);
