@@ -1,7 +1,7 @@
 const maxApi = require("max-api");
 const WebSocket = require("ws");
 
-const wss = new WebSocket.Server({ port: 8080 });
+const wss = new WebSocket.Server({ port: 8085 });
 maxApi.post("Pose WebSocket server listening on ws://localhost:8080");
 
 wss.on("connection", ws => {

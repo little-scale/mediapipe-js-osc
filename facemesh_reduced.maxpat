@@ -30,7 +30,7 @@
 					"numinlets" : 2,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 438.0, 212.0, 64.0, 22.0 ],
+					"patching_rect" : [ 360.0, 165.0, 64.0, 22.0 ],
 					"text" : "script start"
 				}
 
@@ -46,8 +46,6 @@
 					"saved_object_attributes" : 					{
 						"autostart" : 0,
 						"defer" : 0,
-						"node_bin_path" : "",
-						"npm_bin_path" : "",
 						"watch" : 0
 					}
 ,
@@ -78,7 +76,7 @@
 
 			}
  ],
-		"originid" : "pat-400",
+		"originid" : "pat-410",
 		"dependency_cache" : [ 			{
 				"name" : "facemesh_reduced.js",
 				"bootpath" : "~/Desktop/mediapipe-js-osc",

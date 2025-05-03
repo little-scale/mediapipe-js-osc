@@ -24,7 +24,7 @@
       toggleWireframeBtn.innerText = showWireframe ? 'Hide Wireframe' : 'Show Wireframe';
     };
 
-    let socket = new WebSocket("ws://localhost:8080");
+    let socket = new WebSocket("ws://localhost:8083");
 
     const holistic = new Holistic({
       locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
