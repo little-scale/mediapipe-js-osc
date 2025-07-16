@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>HandPose Hybrid Output (Wireframe + Depth)</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 0; }
+    video, canvas { position: absolute; top: 0; left: 0; }
+    #controls {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 10;
+      background: rgba(255, 255, 255, 0.7);
+      padding: 10px;
+      font-size: 12px;
+      line-height: 1.4;
+      max-width: 250px;
+      border-radius: 6px;
+    }
+    #fps { font-weight: bold; }
+  </style>
+</head>
+<body>
+
+<div id="controls">
+  <label>Camera: <select id="cameraSelect"></select></label><br>
+  <label><input type="checkbox" id="showVideo"> Show Video</label><br>
+  <label><input type="checkbox" id="showOverlay" checked> Show Overlay</label><br>
+  <label><input type="checkbox" id="sendOutput" checked> Send Output</label><br>
+  <label><input type="checkbox" id="multiHands"> Output Two Hands (max 2)</label><br>
+  <label><input type="checkbox" id="flatList"> Flat List (vs XYZ lists)</label><br>
+  <label><input type="checkbox" id="flipHoriz"> Flip Horizontally</label><br>
+  <span id="fps">FPS: --</span>
+</div>
+
+<video id="inputVideo" autoplay muted playsinline></video>
+<canvas id="videoCanvas"></canvas>
+
+<script>
+const ws = (window.max) ? null : new WebSocket('ws://localhost:8085');
+const videoElement = document.getElementById('inputVideo');
+const canvasElement = document.getElementById('videoCanvas');
+const canvasCtx = canvasElement.getContext('2d');
+const fpsDisplay = document.getElementById('fps');
+const check = (id) => document.getElementById(id).checked;
+let lastTime = performance.now();
+let frameCount = 0;
+
+navigator.mediaDevices.enumerateDevices().then(devices => {
+  const videoInputs = devices.filter(d => d.kind === 'videoinput');
+  const select = document.getElementById('cameraSelect');
+  videoInputs.forEach((device, idx) => {
+    const option = document.createElement('option');
+    option.value = device.deviceId;
+    option.text = device.label || `Camera ${idx+1}`;
+    select.appendChild(option);
+  });
+  select.onchange = () => startCamera(select.value);
+  if (videoInputs.length) startCamera(videoInputs[0].deviceId);
+});
+
+let camera;
+function startCamera(deviceId) {
+  if (camera) camera.stop();
+  camera = new Camera(videoElement, {
+    deviceId,
+    onFrame: async () => await hands.send({image: videoElement}),
+    width: 640,
+    height: 480
+  });
+  camera.start();
+}
+
+const hands = new Hands({
+  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+});
+hands.setOptions({
+  maxNumHands: 2,
+  modelComplexity: 1,
+  minDetectionConfidence: 0.5,
+  minTrackingConfidence: 0.5
+});
+hands.onResults(onResults);
+
+function sendToMax(address, ...args) {
+  if (window.max && typeof window.max.outlet === 'function') {
+    window.max.outlet(address, ...args);
+  } else if (ws && ws.readyState === WebSocket.OPEN && check('sendOutput')) {
+    ws.send(JSON.stringify({ address, args }));
+  }
+}
+
+function onResults(results) {
+  canvasElement.width = videoElement.videoWidth;
+  canvasElement.height = videoElement.videoHeight;
+  canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+  canvasCtx.save();
+  if (check('flipHoriz')) {
+    canvasCtx.scale(-1, 1);
+    canvasCtx.translate(-canvasElement.width, 0);
+  }
+
+  if (check('showOverlay') && results.multiHandLandmarks) {
+    results.multiHandLandmarks.forEach(landmarks => drawOverlay(landmarks));
+  }
+
+  canvasCtx.restore();
+
+  if (check('sendOutput') && results.multiHandLandmarks) {
+    const handsOut = check('multiHands') ? results.multiHandLandmarks : results.multiHandLandmarks.slice(0, 1);
+    handsOut.forEach((landmarks, idx) => {
+      if (check('flatList')) {
+        sendToMax(`/hand${idx}/flat`, ...landmarks.flatMap(p => [p.x, p.y, p.z]));
+      } else {
+        const xs = landmarks.map(p => p.x);
+        const ys = landmarks.map(p => p.y);
+        const zs = landmarks.map(p => p.z);
+        sendToMax(`/hand${idx}/x`, ...xs);
+        sendToMax(`/hand${idx}/y`, ...ys);
+        sendToMax(`/hand${idx}/z`, ...zs);
+      }
+    });
+  }
+
+  frameCount++;
+  const now = performance.now();
+  if (now - lastTime > 1000) {
+    const fps = (frameCount / ((now - lastTime) / 1000)).toFixed(1);
+    if (check('sendOutput')) sendToMax("/hands/fps", parseFloat(fps));
+    fpsDisplay.textContent = `FPS: ${fps}`;
+    lastTime = now;
+    frameCount = 0;
+  }
+
+  videoElement.style.display = check('showVideo') ? 'block' : 'none';
+}
+
+const HAND_CONNECTIONS = [
+  [0, 1], [1, 2], [2, 3], [3, 4],
+  [0, 5], [5, 6], [6, 7], [7, 8],
+  [5, 9], [9, 10], [10, 11], [11, 12],
+  [9, 13], [13, 14], [14, 15], [15, 16],
+  [13, 17], [17, 18], [18, 19], [19, 20],
+  [0, 17]
+];
+
+function drawOverlay(landmarks) {
+  canvasCtx.strokeStyle = 'green';
+  canvasCtx.lineWidth = 1;
+  canvasCtx.fillStyle = 'green';
+
+  for (const [i, j] of HAND_CONNECTIONS) {
+    const p1 = landmarks[i];
+    const p2 = landmarks[j];
+    canvasCtx.beginPath();
+    canvasCtx.moveTo(p1.x * canvasElement.width, p1.y * canvasElement.height);
+    canvasCtx.lineTo(p2.x * canvasElement.width, p2.y * canvasElement.height);
+    canvasCtx.stroke();
+  }
+
+  for (const pt of landmarks) {
+    const x = pt.x * canvasElement.width;
+    const y = pt.y * canvasElement.height;
+    const depthScale = 1 - pt.z * 10.0;
+    const radius = Math.max(1, 2 + depthScale);
+    canvasCtx.beginPath();
+    canvasCtx.arc(x, y, radius, 0, 2 * Math.PI);
+    canvasCtx.fill();
+  }
+}
+</script>
+
+</body>
+</html>

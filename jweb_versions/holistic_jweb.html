@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Holistic Hybrid Output</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 0; }
+    video, canvas { position: absolute; top: 0; left: 0; }
+    #controls {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 10;
+      background: rgba(255, 255, 255, 0.7);
+      padding: 10px;
+      font-size: 12px;
+      line-height: 1.4;
+      max-width: 250px;
+      border-radius: 6px;
+    }
+    #fps { font-weight: bold; }
+  </style>
+</head>
+<body>
+
+<div id="controls">
+  <label>Camera: <select id="cameraSelect"></select></label><br>
+  <label><input type="checkbox" id="showVideo"> Show Video</label><br>
+  <label><input type="checkbox" id="showOverlay" checked> Show Overlay</label><br>
+  <label><input type="checkbox" id="sendOutput" checked> Send Output</label><br>
+  <label><input type="checkbox" id="flipHoriz"> Flip Horizontally</label><br>
+  <label><input type="checkbox" id="flatList"> Flat List (vs XYZ lists)</label><br>
+  <span id="fps">FPS: --</span>
+</div>
+
+<video id="inputVideo" autoplay muted playsinline></video>
+<canvas id="videoCanvas"></canvas>
+
+<script>
+const ws = (window.max) ? null : new WebSocket('ws://localhost:8087');
+const videoElement = document.getElementById('inputVideo');
+const canvasElement = document.getElementById('videoCanvas');
+const canvasCtx = canvasElement.getContext('2d');
+const fpsDisplay = document.getElementById('fps');
+const check = (id) => document.getElementById(id).checked;
+let lastTime = performance.now();
+let frameCount = 0;
+
+navigator.mediaDevices.enumerateDevices().then(devices => {
+  const videoInputs = devices.filter(d => d.kind === 'videoinput');
+  const select = document.getElementById('cameraSelect');
+  videoInputs.forEach((device, idx) => {
+    const option = document.createElement('option');
+    option.value = device.deviceId;
+    option.text = device.label || `Camera ${idx+1}`;
+    select.appendChild(option);
+  });
+  select.onchange = () => startCamera(select.value);
+  if (videoInputs.length) startCamera(videoInputs[0].deviceId);
+});
+
+let camera;
+function startCamera(deviceId) {
+  if (camera) camera.stop();
+  camera = new Camera(videoElement, {
+    deviceId,
+    onFrame: async () => await holistic.send({image: videoElement}),
+    width: 640,
+    height: 480
+  });
+  camera.start();
+}
+
+const holistic = new Holistic({
+  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
+});
+holistic.setOptions({
+  modelComplexity: 1,
+  smoothLandmarks: true,
+  enableSegmentation: false,
+  refineFaceLandmarks: true,
+  minDetectionConfidence: 0.5,
+  minTrackingConfidence: 0.5
+});
+holistic.onResults(onResults);
+
+function sendToMax(address, ...args) {
+  if (window.max && typeof window.max.outlet === 'function') {
+    window.max.outlet(address, ...args);
+  } else if (ws && ws.readyState === WebSocket.OPEN && check('sendOutput')) {
+    ws.send(JSON.stringify({ address, args }));
+  }
+}
+
+function onResults(results) {
+  canvasElement.width = videoElement.videoWidth;
+  canvasElement.height = videoElement.videoHeight;
+  canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+  canvasCtx.save();
+  if (check('flipHoriz')) {
+    canvasCtx.scale(-1, 1);
+    canvasCtx.translate(-canvasElement.width, 0);
+  }
+
+  if (check('showOverlay')) {
+    if (results.faceLandmarks) drawOverlay(results.faceLandmarks);
+    if (results.leftHandLandmarks) drawOverlay(results.leftHandLandmarks);
+    if (results.rightHandLandmarks) drawOverlay(results.rightHandLandmarks);
+    if (results.poseLandmarks) drawOverlay(results.poseLandmarks);
+  }
+
+  canvasCtx.restore();
+
+  if (check('sendOutput')) {
+    if (results.faceLandmarks) sendLandmarks("/holistic/face", results.faceLandmarks);
+    if (results.leftHandLandmarks) sendLandmarks("/holistic/leftHand", results.leftHandLandmarks);
+    if (results.rightHandLandmarks) sendLandmarks("/holistic/rightHand", results.rightHandLandmarks);
+    if (results.poseLandmarks) sendLandmarks("/holistic/pose", results.poseLandmarks);
+  }
+
+  frameCount++;
+  const now = performance.now();
+  if (now - lastTime > 1000) {
+    const fps = (frameCount / ((now - lastTime) / 1000)).toFixed(1);
+    if (check('sendOutput')) sendToMax("/holistic/fps", parseFloat(fps));
+    fpsDisplay.textContent = `FPS: ${fps}`;
+    lastTime = now;
+    frameCount = 0;
+  }
+
+  videoElement.style.display = check('showVideo') ? 'block' : 'none';
+}
+
+function sendLandmarks(address, landmarks) {
+  if (check('flatList')) {
+    sendToMax(`${address}/flat`, ...landmarks.flatMap(p => [p.x, p.y, p.z]));
+  } else {
+    const xs = landmarks.map(p => p.x);
+    const ys = landmarks.map(p => p.y);
+    const zs = landmarks.map(p => p.z);
+    sendToMax(`${address}/x`, ...xs);
+    sendToMax(`${address}/y`, ...ys);
+    sendToMax(`${address}/z`, ...zs);
+  }
+}
+
+function drawOverlay(landmarks) {
+  canvasCtx.fillStyle = 'green';
+  for (const pt of landmarks) {
+    const x = pt.x * canvasElement.width;
+    const y = pt.y * canvasElement.height;
+    canvasCtx.beginPath();
+    canvasCtx.arc(x, y, 2, 0, 2 * Math.PI);
+    canvasCtx.fill();
+  }
+}
+</script>
+
+</body>
+</html>
