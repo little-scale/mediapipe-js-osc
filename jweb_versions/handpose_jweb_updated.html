@@ -97,7 +97,7 @@
 
   <label>
     <input type="checkbox" id="multiHands">
-    Output Two Hands (max 2)
+    Output Two Hands (0 = left, 1 = right)
   </label>
 
   <br>
@@ -111,7 +111,7 @@
 
   <label>
     <input type="checkbox" id="flipHoriz">
-    Flip Horizontally
+    Flip Horizontally (video + output)
   </label>
 
   <br>
@@ -1090,17 +1090,44 @@ function onResults(results) {
     results.multiHandLandmarks
   ) {
 
-    const handsOut =
-      check("multiHands")
-        ? results.multiHandLandmarks
-        : results.multiHandLandmarks.slice(
-            0,
-            1
-          );
+    /*
+      MediaPipe assumes mirrored/selfie input. We submit the raw,
+      unmirrored video, so its Right label is the user's LEFT hand
+      (hand0), and its Left label is the user's RIGHT hand (hand1).
 
+      Display/output flipping happens AFTER inference and must not
+      change these anatomical hand assignments. Missing/unknown labels
+      are skipped rather than falling back to result-array order.
+      If both detections claim the same side, use the higher score.
+    */
+    const byHand = new Map();
+
+    results.multiHandLandmarks.forEach((landmarks, resultIndex) => {
+      const handedness = results.multiHandedness?.[resultIndex];
+      const label = handedness?.label;
+
+      if (label !== "Left" && label !== "Right") {
+        return;
+      }
+
+      const index = label === "Right" ? 0 : 1;
+      const score = handedness.score ?? 0;
+      const previous = byHand.get(index);
+
+      if (!previous || score > previous.score) {
+        byHand.set(index, { landmarks, index, score });
+      }
+    });
+
+    const detectedHands = Array.from(byHand.values());
+    const handsOut = check("multiHands")
+      ? detectedHands
+      : detectedHands.slice(0, 1);
+
+    const flipX = check("flipHoriz");
 
     handsOut.forEach(
-      (landmarks, index) => {
+      ({ landmarks, index }) => {
 
         if (check("flatList")) {
 
@@ -1109,7 +1136,7 @@ function onResults(results) {
 
             ...landmarks.flatMap(
               point => [
-                point.x,
+                flipX ? 1 - point.x : point.x,
                 point.y,
                 point.z
               ]
@@ -1122,7 +1149,7 @@ function onResults(results) {
 
           const xs =
             landmarks.map(
-              point => point.x
+              point => flipX ? 1 - point.x : point.x
             );
 
 
@@ -1275,6 +1302,11 @@ function updateVideoVisibility() {
     check("showVideo")
       ? "visible"
       : "hidden";
+
+  videoElement.style.transform =
+    check("flipHoriz")
+      ? "scaleX(-1)"
+      : "none";
 
 }
 
